@@ -142,6 +142,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
 
 /------------------------------------------------------------------------------/
 .stream.p.TickLFPo:{[src]
+  .sub.initCallbacks`PROTOCOL_TICKLF;
   .sub.tickLF.subscribe[src;exec tab from .stream.cfg.srcTab where server=src;`];
   };
 
@@ -153,6 +154,13 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
       .hnd.hopen[.stream.srcServers;.stream.cfg.timeout;`eager];
       ];
     ];
+    
+  if[count .stream.tickLFServers;
+    if[.stream.p.srcSubscriptionOn;
+      .hnd.hopen[.stream.tickLFServers;.stream.cfg.timeout;`eager];
+      ];
+    ];
+
   .hnd.hopen[.stream.cfg.serverAux;.stream.cfg.timeout;`lazy];
   };
 
@@ -170,6 +178,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
   {x set y} ./: model;         //use the same table names as source data model
   @[;`sym;`g#]each model[;0];
   .u.w:.u.t!(count .u.t::(),model[;0])#();
+  .cb.add[`.z.pc;`.u.pc];
   };
 
 /------------------------------------------------------------------------------/

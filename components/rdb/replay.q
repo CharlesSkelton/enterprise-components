@@ -25,11 +25,9 @@
 /T/ Replay process should be added to the system.cfg
 /T/ (start code)
 /T/   [[batch.admin_replay]]
-/T/       binPath = ${EC_SYS_PATH}/bin/ec/components/rdb
-/T/       binPath = ${QHOME}/lib,${EC_SYS_PATH}/bin/shared
 /T/       u_file = NULL
 /T/       u_opt = NULL
-/T/       type = b:replay
+/T/       type = q:rdb/replays
 /T/       port = 0
 /T/       command = "q replay.q"
 /T/ (end)
@@ -40,53 +38,53 @@
 
 /------------------------------------------------------------------------------/
 system"l ",getenv[`EC_QSL_PATH],"/sl.q";
+.sl.init[`replay];
 .sl.lib["cfgRdr/cfgRdr"];
 .sl.lib["qsl/sub"];
 .sl.lib["qsl/store"];
 
-.sl.init[`replay];
-
 /------------------------------------------------------------------------------/
 //.replay.cfg.date:.z.d-1;
 //.replay.cfg.rdb:`core.rdb;
-//cfg:.replay.cfg
+// cfg:.replay.cfg
 .replay.p.run:{[cfg]
   rdb:cfg[`rdb];
   date:cfg[`date];
   .log.info[`replay]"Start data replay for date ",string[date], " and rdb ", string rdb;
   // get src servers, get tables
-  .replay.cfg.tables:.cr.getCfgPivot[rdb;`table`sysTable;`serverSrc`eodPath`hdbConn`eodClear`eodPerform];
+  .replay.cfg.tables:.cr.getCfgPivot[rdb;`table`sysTable;`subSrc`hdbConn`eodClear`eodPerform];
+  .replay.cfg.tables:update eodPath:.cr.getCfgField[;`group;`dataPath]'[hdbConn] from .replay.cfg.tables;
   .replay.cfg.fillMissingTabsHdb: .cr.getCfgField[rdb;`group;`cfg.fillMissingTabsHdb];
   .replay.cfg.reloadHdb:          .cr.getCfgField[rdb;`group;`cfg.reloadHdb];
-  .replay.cfg.opt:.Q.opt " " vs -1_1_.cr.getCfgField[rdb;`group;`command];
+  .replay.cfg.opt:                .cr.getCfgField[rdb;`group;`libs];
   .replay.cfg.dataPath:           .cr.getCfgField[`THIS;`group;`dataPath];
 
-  repTabs:exec serverSrc!sectionVal from select sectionVal by serverSrc from .replay.cfg.tables where serverSrc<>`; 
-  processTypes:`$exec subsection!cfgVarValue from .cr.p.cfgTable where subsection in key repTabs, varName=`type;
-  if[any w:0b in/: processTypes in `$("q:tickLF";"q:tickHF");
-    .log.warn"Tables from process/processType will not be replayed: ", .Q.s1[flip (where w;processTypes[where w];repTabs[where w])];
+  repTabs:exec subSrc!sectionVal from select sectionVal by subSrc from .replay.cfg.tables where subSrc<>`; 
+  processTypes:key[repTabs]!.cr.getCfgField[;`group;`type] each key repTabs;
+  if[any w:0b in/: processTypes in `$("q:tickLF/tickLF";"q:tickHF/tickHF");
+    .log.warn[`replay]"Tables from process/processType will not be replayed: ", .Q.s1[flip (where w;processTypes[where w];repTabs[where w])];
     /exclude from repTabs and processTypes
     repTabs:(where w) _ repTabs;
     processTypes:(where w) _ processTypes;
     ];
-  jrns:();
-  if[count processLF:where processTypes in `$("q:tickLF");
-    jrns,:.replay.p.findJournaLF[date;;]'[processLF;repTabs[processLF]];
+  jrns:()!();
+  if[count processLF:where processTypes in `$("q:tickLF/tickLF");
+    jrns[processLF]:.replay.p.findJournaLF[date;;]'[processLF;repTabs[processLF]];
     ];
-  if[count processHF:where processTypes in `$("q:tickHF");
-    jrns,:.replay.p.findJournaHF[date;;]'[processHF;repTabs[processHF]];
+  if[count processHF:where processTypes in `$("q:tickHF/tickHF");
+    jrns[processHF]:.replay.p.findJournaHF[date;;]'[processHF;repTabs[processHF]];
     ];
   // replay journals except ()
-  jrnsOk:jrns p:where 0<count'[jrns];
-  // set data model for these tabs, add `g attr
-  processModel:(key repTabs)[p];
+  jrnsOk:jrns processModel:where 0<count'[jrns];
   modelsAll:.cr.getModel each processModel;
   .replay.p.restoreData'[jrnsOk;modelsAll];
   .replay.p.initEodParams[];
   // load custom lib
   .rdb.plug.beforeEod:()!();
   .rdb.plug.afterEod:()!();
-  .sl.lib each .replay.cfg.opt`lib;
+  if[not .replay.cfg.opt~enlist `;
+    .sl.lib each .replay.cfg.opt;
+    ];
   // run eod         
   .replay.p.eodAct[`beforeEod;;date] each key .rdb.plug.beforeEod;
   .store.run[date];
@@ -132,7 +130,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
 
 /------------------------------------------------------------------------------/
 //date:.z.d
-//process:`in.tickLF
+//process:`t.tickLF
 //tabs:repTabs[process]
 .replay.p.findJournaLF:{[date;process;tabs]
   jrnDir:.cr.getCfgField[process;`group;`dataPath];
@@ -145,7 +143,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
   };
 
 /------------------------------------------------------------------------------/
-//process:`in.tickRmds
+//process:`ofp.tickHF
 //tabs:repTabs[process]
 .replay.p.findJournaHF:{[date;process;tabs]
   jrnDir:.cr.getCfgField[process;`group;`dataPath];
@@ -174,13 +172,15 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
   :jrns[position];
   };
 
-/------------------------------------------------------------------------------/	
+/------------------------------------------------------------------------------/  
 /F/ function for executing callbacks from tickHF journal; data from journal is processed as inserts
 jUpd:{[t;d]
   if[t in .replay.tabs;
     t insert d;
     ];
   };
+
+
 /==============================================================================/
 .sl.main:{[flags]
   .cr.loadCfg[`ALL];
@@ -196,6 +196,7 @@ jUpd:{[t;d]
     ];
   
   .sl.libCmd[];
+  .sub.initCallbacks[`PROTOCOL_TICKLF];
   .replay.p.run[.replay.cfg];
   };
 
@@ -213,3 +214,4 @@ jUpd:{[t;d]
 tables[]!count'[value each tables[]]
 
 .Q.gc[]
+

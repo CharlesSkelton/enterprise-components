@@ -504,7 +504,7 @@
     };
   should["get func summary - .monitor.p.getFuncSummary[]"]{
     res:.monitor.p.getFuncSummary[enlist`ap1;`.ns`.ns2`.ns3];
-    (delete time from res)mustmatch ([]sym:`ap1;procNs:`.ns`.ns2`.ns3;funcCnt:1 2 0Ni; func:(enlist `.ns.func1;`.ns2.func1`.ns2.func2;`symbol$()));
+    (delete time from res)mustmatch ([]sym:`ap1;procNs:`.ns`.ns2`.ns3;funcCnt:1 2 0i; func:(enlist `.ns.func1;`.ns2.func1`.ns2.func2;`symbol$()));
     };
   should[".monitor.p.dailyExec.sysFuncSummary[]"]{
     `.monitor.cfg.sysFuncSummaryProcList mock enlist`ap1;
@@ -516,7 +516,12 @@
   should[".monitor.p.getKdbLicSummary[]"]{
     `.sl.componentId mock `core.rdb;
     lic:.monitor.p.getKdbLicSummary[];
-    (delete time from lic) mustmatch ([]sym:enlist`core.rdb;maxCoresAllowed:"I"$.z.l 0;expiryDate:"D"$.z.l 1;updateDate:"D"$.z.l 2;cfgCoreCnt:.z.c);
+    if[count .z.l;
+      (delete time from lic) mustmatch ([]sym:enlist`core.rdb;maxCoresAllowed:"I"$.z.l 0;expiryDate:"D"$.z.l 1;updateDate:"D"$.z.l 2;cfgCoreCnt:.z.c);
+      ];
+    if[0=count .z.l;
+      (delete time from lic) mustmatch ([]sym:enlist`core.rdb;maxCoresAllowed:enlist 0Ni;expiryDate:enlist 0Nd;updateDate:enlist 0Nd;cfgCoreCnt:.z.c);
+      ];
     };
   should[".monitor.p.dailyExec.getKdbLicSummary[]"]{
     .monitor.p.dailyExec.sysKdbLicSummary[];

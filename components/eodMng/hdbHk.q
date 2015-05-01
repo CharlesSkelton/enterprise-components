@@ -126,6 +126,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
 
 .sl.lib["cfgRdr/cfgRdr"];
 .sl.lib["qsl/handle"];
+.sl.lib["qsl/os"];
 
 /G/ table with list of tasks
 /G/ plugin : Symbol - symbol with plugin name (ie. `compress for '.eodsync.hk.plugins.compress')
@@ -133,7 +134,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
 /G/ dayInPast : Int - number of days separating current partition from partition on which 
 /G/ plugin should operate (eg. 5 would mean that plugin will work on partitions created 5 days ago)
 /G/ param[1-6]: SYMBOL - additional params for the plugin (ie. compression parameters for compression plugin)
-.hdbHk.cfg.taskList:([] action:`$() ; table:(enlist ::); dayInPast:`int$(); param1:`$(); param2:`$(); param3:`$(); param4:`$(); param5:`$(); param6:`$());
+.hdbHk.cfg.taskList:([] action:`$() ; table:(enlist ::); dayInPast:`int$(); performBackup:0#0b; param1:`$(); param2:`$(); param3:`$(); param4:`$(); param5:`$(); param6:`$());
 
 /G/ directory with initial definition of housekeeping plugins
 .hdbHk.plug.action:()!();
@@ -173,7 +174,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
   .hdbHk.p.deleteOldBackups[date;.hdbHk.cfg.bckDir];    
   .hdbHk.cfg.bckDir:` sv (.hdbHk.cfg.bckDir;`$string[.hdbHk.cfg.hdbConn],string[date]);
   
-  (.hdbHk.p.pluginAct[date] .) each {(3#x), enlist (3_x) where not null each 3_x} each flip value flip .hdbHk.cfg.taskList;
+  (.hdbHk.p.pluginAct[date] .) each {(4#x), enlist (4_x) where not null each 4_x} each flip value flip .hdbHk.cfg.taskList;
   
   // verify & reload hdb
   .hnd.hopen[.hdbHk.cfg.hdbConn;1000i;`eager];
@@ -209,7 +210,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
   };
 
 .hdbHk.p.deleteOneDir:{[date;bckdir]
-  system["rm -r ",1_string[` sv bckdir,`$string[.hdbHk.cfg.hdbConn],string[date]]];
+  .os.rmdir 1_string ` sv bckdir,`$string[.hdbHk.cfg.hdbConn],string[date] ;
   };
 
 
@@ -231,14 +232,23 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
   if[not args[`logicalBlockSize] within (12;20); '"Given logicalBlockSize is",string[args[`logicalBlockSize]], ". logicalBlockSize - is a power of 2 between 12 and 20"];
   if[not args[`compressionAlgorithm] in (0;1;2); '"Given compressionAlgorithm is",string[args[`compressionAlgorithm]], ". compressionAlgorithm - is one of the following, 0 (none), 1 (kdb+ ipc), 2 (gzip)"];
   if[not args[`compressionLevel] within (0;9); '"Given compressionLevel is",string[args[`compressionLevel]], ". compressionLevel - is between 0 and 9 (valid only for gzip, use 0 for other algorithms)"];
-
   tmpDir:.hdbHk.cfg.dataPath;
   tmpPath:` sv (tmpDir;`$string[date];`);
   columns:cols[tableHnd];
-  {[tableHnd;tmpPath;lbs;ca;cl;x] -19!(` sv (tableHnd;x);` sv (tmpPath;x);lbs;ca;cl)}[tableHnd;tmpPath;args`logicalBlockSize;args`compressionAlgorithm;args`compressionLevel;] each columns;
-  colDirs:{[tmpDir;date;subDir] ` sv (tmpDir;`$string[date];subDir)}[tmpDir;date;] each key tmpPath;
-  system "cp -rf ", ("" {[x;y] 1_string[y]," ",x}/ colDirs)," \"",1_string[tableHnd],"\"";
-  system "rm -rf ",1_string[tmpPath];
+  {[tableHnd;tmpPath;lbs;ca;cl;x] 
+     src:` sv (tableHnd;x);
+     dest:` sv (tmpPath;x);
+     .log.info[`compress] "compressing ",string[src]," to ",string[dest];
+      -19!(src;dest;lbs;ca;cl)
+  }[tableHnd;tmpPath;args`logicalBlockSize;args`compressionAlgorithm;args`compressionLevel;] each columns;
+
+  colFiles:{[tmpDir;date;subDir] ` sv (tmpDir;`$string[date];subDir)}[tmpDir;date;] each key tmpPath;
+
+  .log.info[`compress] "moving compressed files to ",string[tableHnd];
+  .os.move[;1_string[tableHnd]] each 1 _/: string[colFiles];
+
+  .log.info[`compress] "removing temp dir ",string[tmpPath];
+  .os.rmdir 1_string tmpPath;
   };
 
 /F/ plugin for deleting table in given partition;
@@ -292,37 +302,39 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
 //tab:tabs
 //date:p 0;plugin:p 1;tabs:p 2;when:p 3;args:p 4
 
-.hdbHk.p.pluginAct:{[date;plugin;tabs;when;args]
+.hdbHk.p.pluginAct:{[date;plugin;tabs;when;doBck;args]
   hnd:.hdbHk.getDateHnd[date-when];
-  if[()~ key hnd;  // partition not exists
-    .log.warn[`hdbHk] "Partition ", string[hnd], " not exists";
+  if[()~ key hnd;  // partition does not exist
+    .log.warn[`hdbHk] "Partition ", string[hnd], " does not exist";
     :();
     ];
   
   funcName:` sv`.hdbHk.plug.action,plugin;
 
-  {[funcName;date;tab;when;args]
+  {[funcName;date;tab;when;doBck;args]
     tabHnd:` sv (.hdbHk.getDateHnd[date-when];tab);
 
-    if[not tabHnd in .hdbHk.p.handleSet; // if not in handleSet -> create backup
+    if[doBck and (not tabHnd in .hdbHk.p.handleSet); // if not in handleSet -> create backup
       `.hdbHk.p.handleSet insert tabHnd;
       .pe.dot[.hdbHk.p.backup;(date-when;tab);{[x;date;tab;when] .log.error[`hdbHk] "Performing backup of table ",string[tab]," for date ",string[date-when]," failed with: ",x}[;date;tab;when]];
       ];
     
     .event.dot[`hdbHk;funcName;(date-when;tabHnd;args);();`info`info`error;"Perform plugin ",string[funcName] ," for table ",string[tab]," date : ",string[date-when]]
-    }[funcName;date;;when;args] each tabs;
+    }[funcName;date;;when;doBck;args] each tabs;
   };
 
 /F/ creates backup of table partition in path specified by .hdbHk.cfg.bckDir
 /P/ date : Date - date of partition
 /P/ tab : Symbol - nameof table 
 
-.hdbHk.p.backup:{[date;tab]
+.hdbHk.p.backup:{[date;tab] 
   tabHnd:` sv (.hdbHk.getDateHnd[date];tab);
   dst:1_string[.hdbHk.cfg.bckDir],"/",string[date];
   .log.info[`hdbHk]"Backup ",string[tabHnd], " to ", dst;
-  system "mkdir -p \"",dst,"\"";
-  system "cp -rf \"", 1_string[tabHnd],"\" \"",dst,"\"";
+  //system "mkdir -p \"",dst,"\"";
+  .os.mkdir dst;
+  // system "cp -rf \"", 1_string[tabHnd],"\" \"",dst,"\"";
+  .os.cpdir[1_string[tabHnd];dst]; 
   };
 
 .hdbHk.p.raport:{[]
@@ -351,12 +363,16 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
   .hdbHk.cfg.bckDays:       .cr.getCfgField[`THIS;`group;`cfg.bckDays];
   .hdbHk.cfg.raportDir:     .cr.getCfgField[`THIS;`group;`cfg.raportDir];
   .hdbHk.cfg.dataPath:      .cr.getCfgField[`THIS;`group;`dataPath];
+
+  backups:.cr.getCfgTab[`THIS;`table`sysTable;enlist `performBackup];
   t0:.cr.getCfgTab[`THIS;`table`sysTable;enlist `hdbHousekeeping];
   t1:ungroup select from  t0 where  0<> count each finalValue;
   if[not count t1;.hdbHk.p.saveStatus[`success]; .log.info[`hdbHk]"There are no actions to be performed by the ",string[.sl.componentId], ". Process will exit now.";:()];
-  
-  t2:`action`table`dayInPast xcols`table xcol (select table:sectionVal from t1) ,' t1[`finalValue];
-  `.hdbHk.cfg.taskList insert t2;
+  t2:(select table:sectionVal from t1) ,' t1[`finalValue];
+  t3:t2 lj 1!select table:sectionVal, performBackup:finalValue from backups;
+  t4:cols[.hdbHk.cfg.taskList] xcols t3;
+  `.hdbHk.cfg.taskList insert t4;
+
   .sl.libCmd[];
   .hdbHk.performHk[.hdbHk.cfg.date];
   };

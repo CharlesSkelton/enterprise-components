@@ -78,7 +78,7 @@
 /S/ *compress*
 /S/ This plugin performs gzip compression on files/directories. In result original file/directory is deleted and 
 /S/ instead compressed file is created (with extension tar.gz).Already compressed files are not processed (based on
-/S/ the file extension).
+/S/ the file extension). On Windows, the zip utility from the Info-ZIP project needs to be available on PATH.
 /S/ 
 /S/ *Custom plugins*
 /S/ In addition to 'delete' and 'compress' plugins, additional actions can be performed by loading custom plugins.
@@ -121,6 +121,7 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
 /---------------------------------------------------------------------------------/
 
 .sl.lib["cfgRdr/cfgRdr"];
+.sl.lib["qsl/os"]
 
 /---------------------------------------------------------------------------------/
 
@@ -134,8 +135,8 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
 
 .hk.p.processOneTask:{[taskDef]
   plugin:` sv (`.hk.plug;taskDef[`action]);
-  findCmd:"find -L ",1_string[taskDef[`dir]]," -mtime +",string[taskDef[`age]], " -name \"",string[taskDef[`pattern]],"\" -prune";
-  files:`$.pe.at[system;findCmd;{[cmd;sig] .log.error[`hk] "error while calling \"",cmd,"\". Maybe invalid arguments?"; :()}[findCmd;]];
+  files:.os.find[taskDef `dir;taskDef `age;taskDef `pattern];
+  if[0~count files;.log.info[`hk] "no files found matching pattern ",(string taskDef `pattern),", skipping task ",string taskDef `action;:(::)];
   .log.info[`hk] "Running ",string[plugin], " for ", string[taskDef[`proc]], " on ",string[count files], " files";
   {[plugin;file] .pe.dot[{x @ y};(plugin;file);{[plugin;file;sig] .log.error[`hk] raze "Signal on plugin: ",string[plugin],", file: ",string[file]," - ",string[sig]}[plugin;file;]]}[plugin;] each files;
   };
@@ -144,20 +145,15 @@ system"l ",getenv[`EC_QSL_PATH],"/sl.q";
 .hk.plug.delete:{[path]
   .log.info[`hk] "deleting: ",string[path];
   isDir:0<type key hsym path;
-  cmd:"rm",$[isDir;" -r ";" "],string path;
-  .log.debug[`hk] "cmd: ",cmd;
-  system cmd;
+  $[isDir;.os.rmdir string path;.os.rm string path];
   };
 
 
 .hk.plug.compress:{[path]
   if[path like "*.tar.gz";.log.info[`hk] "compressing: file" ,string[path], " already compressed - skipping";:(::);];
+  if[path like "*.zip";.log.info[`hk] "compressing: file" ,string[path], " already compressed - skipping";:(::);];
   .log.info[`hk] "compressing: ",string[path];
-
-  cmd:"tar -czvf ",string[path],".tar.gz ",string[path]," --remove-files --absolute-names"; 
-
-  .log.debug[`hk] "cmd: ",cmd;
-  system cmd;
+  .os.compress string path;
   };
 
 .hk.p.onTimer:{[id]
